@@ -101,7 +101,14 @@ async def catalogs():
             for p in ["domains", "groups?type=campaigns", "traffic_sources", "offers"]
         )
     )
+    catalogs = dict(zip(["domains", "groups", "sources", "offers"], values))
+    missing = [
+        key
+        for key, rows in catalogs.items()
+        if not any(x.get("state") != "deleted" for x in rows)
+    ]
     return {
+        "missing": missing,
         "demo": settings.demo_mode,
         "prefix": settings.campaign_prefix,
         **dict(zip(["domains", "groups", "sources", "offers"], values)),

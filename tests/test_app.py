@@ -131,3 +131,13 @@ def test_cannot_edit_foreign_campaign(client):
 
     api.data["campaigns"].append({"id": 98765, "name": "production"})
     assert client.get("/api/campaigns/98765/streams").status_code == 403
+
+
+def test_catalogs_report_missing_dependencies(client, monkeypatch):
+    from app.keitaro import api
+
+    monkeypatch.setitem(api.data, "domains", [])
+    monkeypatch.setitem(api.data, "traffic_sources", [])
+    result = client.get("/api/catalogs").json()
+    assert result["missing"] == ["domains", "sources"]
+    assert result["groups"]

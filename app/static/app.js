@@ -33,6 +33,7 @@ async function busy(fn) {
     message(e.message, true);
   } finally {
     buttons.forEach((b) => (b.disabled = false));
+    $("create-submit").disabled = !catalog || Boolean(catalog.missing?.length);
   }
 }
 function option(select, value, text) {
@@ -42,10 +43,14 @@ function option(select, value, text) {
   select.append(o);
 }
 function fill(id, rows) {
+  const previous = $(id).value;
+  const available = rows.filter((x) => x.state !== "deleted");
   $(id).replaceChildren();
-  option($(id), "", "Выберите…");
-  for (const x of rows.filter((x) => x.state !== "deleted"))
+  option($(id), "", available.length ? "Выберите…" : "Нет доступных записей в Keitaro");
+  $(id).disabled = !available.length;
+  for (const x of available)
     option($(id), x.id, `#${x.id} ${x.name}`);
+  if (available.some(x => String(x.id) === previous)) $(id).value = previous;
 }
 async function campaigns() {
   fill("campaign", await api("/campaigns"));
@@ -66,7 +71,11 @@ async function init() {
       : "Keitaro API";
     $("mode").className = catalog.demo ? "badge" : "";
     await campaigns();
-    message("Готово. Создайте кампанию или откройте существующую.");
+    const labels = {domains:"домен", groups:"группа кампаний", sources:"источник трафика", offers:"оффер"};
+    catalog.missing = catalog.missing || Object.keys(labels).filter(k => !catalog[k].some(x=>x.state!=="deleted"));
+    if (catalog.missing.length) {
+      message("Keitaro не вернул доступные записи: " + catalog.missing.map(k=>labels[k]).join(", ") + ". Попросите администратора подготовить их или выдать доступ этому пользователю. После этого нажмите «Обновить списки». Создание кампании пока недоступно.", true);
+    } else message("Готово. Создайте кампанию или откройте существующую.");
   });
 }
 $("create").onsubmit = (e) => {
@@ -89,6 +98,7 @@ $("create").onsubmit = (e) => {
   });
 };
 $("refresh").onclick = () => busy(campaigns);
+$("reload-catalogs").onclick = init;
 $("open").onclick = () => busy(openCampaign);
 async function openCampaign() {
   currentCampaign = +$("campaign").value;
