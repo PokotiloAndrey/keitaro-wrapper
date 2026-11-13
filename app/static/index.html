@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ru">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Keitaro Workshop</title
+  ><style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: #f3f5f7;
+      color: #203044;
+      font: 15px system-ui;
+    }
+    header {
+      background: #132b38;
+      color: white;
+      padding: 25px 5%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0;
+    }
+    header small {
+      color: #a6c6ca;
+    }
+    main {
+      max-width: 1180px;
+      margin: 28px auto;
+      padding: 0 20px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 330px 1fr;
+      gap: 24px;
+    }
+    section,
+    article {
+      background: white;
+      border: 1px solid #dce3e8;
+      border-radius: 14px;
+      padding: 22px;
+      margin-bottom: 18px;
+    }
+    h2 {
+      font-size: 19px;
+      margin-top: 0;
+    }
+    label {
+      display: block;
+      color: #566575;
+      font-size: 13px;
+      margin: 14px 0 5px;
+    }
+    input,
+    select {
+      font: inherit;
+      padding: 10px;
+      border: 1px solid #ccd6df;
+      border-radius: 7px;
+      width: 100%;
+      background: white;
+    }
+    button {
+      font: inherit;
+      padding: 9px 13px;
+      border: 1px solid #c9d7df;
+      border-radius: 7px;
+      cursor: pointer;
+      background: white;
+      color: #244151;
+    }
+    button:hover {
+      background: #ecf4f5;
+    }
+    button.primary {
+      background: #157b75;
+      border-color: #157b75;
+      color: white;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: wait;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+    .toolbar select {
+      flex: 1;
+      width: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th,
+    td {
+      text-align: left;
+      padding: 12px 6px;
+      border-bottom: 1px solid #e6ebef;
+    }
+    th {
+      font-size: 12px;
+      color: #64778b;
+    }
+    td input[type="number"] {
+      width: 78px;
+    }
+    td input[type="checkbox"] {
+      width: auto;
+    }
+    .muted {
+      color: #6b7c8c;
+    }
+    .disabled {
+      opacity: 0.5;
+    }
+    #status {
+      padding: 12px 16px;
+      white-space: pre-wrap;
+      border-radius: 8px;
+      margin-bottom: 18px;
+      background: #e4eef3;
+    }
+    #status.error {
+      background: #fee8e6;
+      color: #8c2b22;
+    }
+    .badge {
+      background: #fff0bb;
+      color: #604d16;
+      padding: 6px 10px;
+      border-radius: 6px;
+    }
+    .total {
+      font-weight: bold;
+      color: #157b75;
+    }
+    details {
+      margin-top: 20px;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+    }
+    .empty {
+      padding: 25px;
+      text-align: center;
+      color: #758391;
+    }
+    @media (max-width: 800px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      header {
+        padding: 18px;
+      }
+      table {
+        font-size: 12px;
+      }
+      article {
+        overflow: auto;
+      }
+    }
+  </style>
+  <header>
+    <div>
+      <h1>Keitaro Workshop</h1>
+      <small>Кампании · потоки · распределение трафика</small>
+    </div>
+    <span id="mode"></span>
+  </header>
+  <main>
+    <div id="status" role="status">Подключение к Keitaro…</div>
+    <div class="grid">
+      <section>
+        <h2>Новая кампания</h2>
+        <form id="create">
+          <label for="name">Название</label
+          ><input
+            id="name"
+            required
+            maxlength="120"
+            placeholder="summer_launch"
+          /><small class="muted" id="prefix"></small
+          ><label for="country">Страна → Google</label
+          ><input
+            id="country"
+            required
+            maxlength="2"
+            pattern="[A-Za-z]{2}"
+            value="DE"
+          /><label for="offer">Оффер для остальных посетителей</label
+          ><select id="offer" required></select
+          ><label for="domain">Домен</label
+          ><select id="domain" required></select
+          ><label for="group">Группа</label
+          ><select id="group" required></select
+          ><label for="source">Источник</label
+          ><select id="source" required></select>
+          <p class="muted">
+            Поток 1 — выбранная страна на Google. Поток 2 — все остальные на
+            оффер.
+          </p>
+          <button class="primary" type="submit">Создать кампанию</button>
+        </form>
+      </section>
+      <div>
+        <section>
+          <h2>Редактор кампании</h2>
+          <div class="toolbar">
+            <select id="campaign" aria-label="Кампания"></select
+            ><button id="refresh">Обновить</button
+            ><button id="open">Открыть</button>
+          </div>
+          <div class="muted">
+            Редактирование сохраняет черновик. В Keitaro изменения отправляются
+            кнопкой «Применить».
+          </div>
+        </section>
+        <div id="streams"></div>
+      </div>
+    </div>
+    <details>
+      <summary>Журнал операций</summary>
+      <button id="logs">Обновить журнал</button>
+      <pre id="journal"></pre>
+    </details>
+  </main>
+  <script src="/app.js"></script>
+</html>
