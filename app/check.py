@@ -17,7 +17,7 @@ async def check(use_base_domain=False):
         problems.append('Выполните миграции: python -m alembic upgrade head')
     else:
         with engine.connect() as connection:
-            if connection.execute(text('SELECT version_num FROM alembic_version')).scalar() != '001':
+            if connection.execute(text('SELECT version_num FROM alembic_version')).scalar() != '002':
                 problems.append('Миграции не актуальны: python -m alembic upgrade head')
     print('Режим: ' + ('демо' if settings.demo_mode else 'Keitaro API'))
     data = await catalogs()

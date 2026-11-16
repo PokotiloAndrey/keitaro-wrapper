@@ -151,12 +151,42 @@ def fingerprint(stream):
     ).hexdigest()
 
 
+def normalize_offers(offers):
+    return [{"offer_id": int(x["offer_id"]), "share": int(x["share"]),
+             "state": x.get("state", "active"), "locked": bool(x.get("locked", False))}
+            for x in offers]
+
+
+def committed(row):
+    return normalize_offers(row.committed_offers if row.committed_offers is not None
+                            else row.baseline.get("offers", []))
+
+
+def dirty(row):
+    return normalize_offers(row.offers) != committed(row)
+
+
+def reconcile(row, stream):
+    previous = {x["offer_id"]: x for x in committed(row)}
+    rows = normalize_offers(stream.get("offers", []))
+    present = {x["offer_id"] for x in rows}
+    for x in rows:
+        x["locked"] = previous.get(x["offer_id"], {}).get("locked", False)
+    rows.extend({**x, "state": "disabled", "share": 0, "locked": False}
+                for oid, x in previous.items() if oid not in present)
+    row.baseline = stream
+    row.offers = rows
+    row.committed_offers = rows
+    row.revision += 1
+
+
 def dto(row):
     return {
         "stream_id": row.stream_id,
         "campaign_id": row.campaign_id,
         "revision": row.revision,
         "offers": row.offers,
+        "dirty": dirty(row),
         "name": row.baseline.get("name", ""),
     }
 
@@ -328,12 +358,16 @@ async def fetch(cid: int, sid: int):
         with Session() as db:
             row = db.get(Draft, sid)
             if row:
+                if not dirty(row):
+                    reconcile(row, stream)
+                    db.commit()
                 return dto(row)
             row = Draft(
                 stream_id=sid,
                 campaign_id=cid,
                 baseline=stream,
                 offers=[{**x, "locked": False} for x in stream.get("offers", [])],
+                committed_offers=normalize_offers(stream.get("offers", [])),
                 revision=1,
             )
             db.add(row)
@@ -397,7 +431,8 @@ async def cancel(sid: int, body: Revision):
         with Session() as db:
             row = get_draft(db, sid, body.revision)
             await owned(row.campaign_id)
-            db.delete(row)
+            current = await api.request("GET", f"streams/{sid}")
+            reconcile(row, current)
             db.commit()
             return {"ok": True}
 
@@ -423,7 +458,7 @@ async def push(sid: int, body: Revision):
                     await api.request("GET", f"offers/{offer['offer_id']}")
             payload = {
                 "offers": [
-                    {k: x[k] for k in ("offer_id", "share", "state")} for x in rows
+                    {k: x[k] for k in ("offer_id", "share", "state")} for x in rows if x["state"] == "active"
                 ]
             }
             op = Operation(
@@ -449,7 +484,10 @@ async def push(sid: int, body: Revision):
                         502, "Проверка после записи не совпала. Обновите поток."
                     )
                 op.status = "done"
-                db.delete(row)
+                row.baseline = saved
+                row.offers = rows
+                row.committed_offers = rows
+                row.revision += 1
                 db.commit()
                 return saved
             except UpstreamError:

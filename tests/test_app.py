@@ -200,3 +200,72 @@ def test_volatile_timestamp_does_not_block_draft(client):
     client.post(f'/api/campaigns/{cid}/streams/{sid}/fetch', json={})
     next(s for s in api.data['streams'] if s['id'] == sid)['updated_at'] = 'later'
     assert client.post(f'/api/drafts/{sid}/push', json={'revision': 1}).status_code == 200
+
+
+def test_removed_offer_archived_locally_and_pin_survives_push(client):
+    from app.keitaro import api
+    campaign, _ = create(client)
+    cid = campaign['id']
+    sid = client.get(f'/api/campaigns/{cid}/streams').json()[1]['id']
+    path = f'/api/campaigns/{cid}/streams/{sid}/fetch'
+    d = client.post(path, json={}).json()
+    rows = [{'offer_id': 1, 'share': 40, 'state': 'active', 'locked': True},
+            {'offer_id': 2, 'share': 60, 'state': 'active'},
+            {'offer_id': 3, 'share': 0, 'state': 'disabled'}]
+    d = client.put(f'/api/drafts/{sid}', json={'revision': d['revision'], 'offers': rows}).json()
+    assert d['dirty'] is True
+    assert client.post(f'/api/drafts/{sid}/push', json={'revision': d['revision']}).status_code == 200
+    remote = next(s for s in api.data['streams'] if s['id'] == sid)
+    assert [o['offer_id'] for o in remote['offers']] == [1, 2]
+    d = client.post(path, json={}).json()
+    assert d['dirty'] is False
+    assert d['offers'][0]['locked'] is True
+    assert d['offers'][2]['state'] == 'disabled'
+    remote['offers'] = [remote['offers'][0]]
+    remote['offers'][0]['share'] = 100
+    d = client.post(path, json={}).json()
+    assert next(o for o in d['offers'] if o['offer_id'] == 2)['state'] == 'disabled'
+    assert d['dirty'] is False
+
+
+def test_cancel_removes_unpublished_additions_and_keeps_archive(client):
+    campaign, _ = create(client)
+    cid = campaign['id']
+    sid = client.get(f'/api/campaigns/{cid}/streams').json()[1]['id']
+    path = f'/api/campaigns/{cid}/streams/{sid}/fetch'
+    d = client.post(path, json={}).json()
+    d = client.put(f'/api/drafts/{sid}', json={'revision': d['revision'], 'offers': d['offers'] + [
+        {'offer_id': 2, 'share': 0, 'state': 'active'}]}).json()
+    client.post(f'/api/drafts/{sid}/cancel', json={'revision': d['revision']})
+    d = client.post(path, json={}).json()
+    assert [o['offer_id'] for o in d['offers']] == [1]
+    assert d['dirty'] is False
+
+
+def test_restore_archived_offer_and_cancel_preserve_committed_state(client):
+    campaign, _ = create(client)
+    cid = campaign['id']
+    sid = client.get(f'/api/campaigns/{cid}/streams').json()[1]['id']
+    path = f'/api/campaigns/{cid}/streams/{sid}/fetch'
+    def edit_and_push(rows):
+        d = client.post(path, json={}).json()
+        d = client.put(f'/api/drafts/{sid}', json={'revision': d['revision'], 'offers': rows}).json()
+        r = client.post(f'/api/drafts/{sid}/push', json={'revision': d['revision']})
+        assert r.status_code == 200, r.text
+        return r.json()
+    rows = [{'offer_id': 1, 'share': 0, 'state': 'active'},
+            {'offer_id': 2, 'share': 0, 'state': 'active'}]
+    edit_and_push(rows)
+    rows[1]['state'] = 'disabled'
+    assert len(edit_and_push(rows)['offers']) == 1
+    rows[1]['state'] = 'active'
+    result = edit_and_push(rows)
+    assert [x['share'] for x in result['offers']] == [50, 50]
+    d = client.post(path, json={}).json()
+    changed = [dict(x) for x in d['offers']]
+    changed[0]['state'] = 'disabled'
+    d = client.put(f'/api/drafts/{sid}', json={'revision': d['revision'], 'offers': changed}).json()
+    client.post(f'/api/drafts/{sid}/cancel', json={'revision': d['revision']})
+    d = client.post(path, json={}).json()
+    assert [x['share'] for x in d['offers']] == [50, 50]
+    assert not d['dirty']

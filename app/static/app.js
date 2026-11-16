@@ -137,10 +137,7 @@ async function openCampaign() {
     } else {
       const h = document.createElement("h2");
       h.textContent = stream.name;
-      const p = document.createElement("p");
-      p.textContent =
-        "Поток перенаправления · " + JSON.stringify(stream.filters || []);
-      card.append(h, p);
+      card.append(h);
     }
   }
 }
@@ -152,8 +149,9 @@ function button(text, fn) {
 }
 function renderDraft(card, draft) {
   card.replaceChildren();
+  card.classList.toggle("pending", Boolean(draft.dirty));
   const h = document.createElement("h2");
-  h.textContent = draft.name + ` · #${draft.stream_id}`;
+  h.textContent = draft.name + ` · #${draft.stream_id}` + (draft.dirty ? " · Не опубликовано" : " · Сохранено");
   card.append(h);
   const tools = document.createElement("div");
   tools.className = "toolbar";
@@ -272,6 +270,15 @@ function renderDraft(card, draft) {
   add.style.marginTop = "16px";
   const select = document.createElement("select");
   select.setAttribute("aria-label", "Добавить оффер");
+  const search = document.createElement("input");
+  search.placeholder = "Поиск оффера по ID или названию";
+  search.setAttribute("aria-label", "Поиск оффера");
+  search.oninput = () => {
+    const query = search.value.toLowerCase().trim();
+    for (const opt of select.options) opt.hidden = Boolean(opt.value) && !opt.textContent.toLowerCase().includes(query);
+    if (select.selectedOptions[0]?.hidden) select.value = "";
+  };
+  add.append(search);
   option(select, "", "Выберите оффер…");
   for (const x of catalog.offers.filter(
     (x) =>

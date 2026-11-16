@@ -14,6 +14,7 @@ class Draft(Base):
     campaign_id: Mapped[int]
     baseline: Mapped[dict] = mapped_column(JSON)
     offers: Mapped[list] = mapped_column(JSON)
+    committed_offers: Mapped[list | None] = mapped_column(JSON, nullable=True)
     revision: Mapped[int] = mapped_column(default=1)
 
 
