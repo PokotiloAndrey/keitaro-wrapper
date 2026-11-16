@@ -52,9 +52,7 @@ function readinessMessage() {
     message("Нет доступных данных: " + missing.map(k => labels[k]).join(", ") +
       (failures.length ? ". Ошибки: " + failures.join("; ") : "") +
       ". Проверьте доступы в Keitaro, затем нажмите «Обновить списки». Редактор существующих кампаний доступен отдельно.", true);
-  } else message($("base-domain").checked
-    ? "Выбран базовый домен трекера. Используйте этот вариант, если он согласован для задания."
-    : "Готово. Создайте кампанию или откройте существующую.");
+  } else message("Готово. Создайте кампанию или откройте существующую.");
 }
 $("base-domain").onchange = () => { updateReadiness(); if (catalog) readinessMessage(); };
 function option(select, value, text) {
@@ -91,7 +89,6 @@ async function init() {
       ? "ДЕМО · данные в памяти"
       : "Keitaro API";
     $("mode").className = catalog.demo ? "badge" : "";
-    $("base-domain-label").textContent = "Базовый домен: " + catalog.base_domain;
     readinessMessage();
     try { await campaigns(); } catch (e) { message("Не удалось загрузить кампании: " + e.message, true); }
   });
