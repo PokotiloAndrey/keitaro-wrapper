@@ -8,7 +8,7 @@ import pycountry
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from .config import settings
 from .db import Session, Draft, Operation
@@ -72,10 +72,17 @@ class CreateCampaign(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     country: str
     offer_id: int = Field(gt=0)
-    domain_id: int = Field(gt=0)
+    domain_id: int | None = Field(default=None, gt=0)
+    use_base_domain: bool = False
     group_id: int = Field(gt=0)
     traffic_source_id: int = Field(gt=0)
     request_id: uuid.UUID
+
+    @model_validator(mode="after")
+    def domain_choice(self):
+        if (self.domain_id is None) != self.use_base_domain:
+            raise ValueError("Выберите домен или явно включите базовый домен")
+        return self
 
     @field_validator("country")
     @classmethod
@@ -95,23 +102,29 @@ class CreateCampaign(BaseModel):
 
 @app.get("/api/catalogs")
 async def catalogs():
+    paths = {"domains": "domains", "groups": "groups?type=campaigns",
+             "sources": "traffic_sources", "offers": "offers"}
     values = await asyncio.gather(
-        *(
-            api.request("GET", p)
-            for p in ["domains", "groups?type=campaigns", "traffic_sources", "offers"]
-        )
+        *(api.request("GET", path) for path in paths.values()),
+        return_exceptions=True,
     )
-    catalogs = dict(zip(["domains", "groups", "sources", "offers"], values))
-    missing = [
-        key
-        for key, rows in catalogs.items()
-        if not any(x.get("state") != "deleted" for x in rows)
-    ]
+    data, errors = {}, {}
+    for key, value in zip(paths, values):
+        if isinstance(value, UpstreamError):
+            errors[key] = {"status": value.status, "message": value.message}
+            data[key] = []
+        elif isinstance(value, Exception):
+            raise value
+        elif not isinstance(value, list):
+            errors[key] = {"status": 502, "message": "Keitaro вернул неверный формат списка"}
+            data[key] = []
+        else:
+            data[key] = [x for x in value if x.get("state") != "deleted"]
     return {
-        "missing": missing,
-        "demo": settings.demo_mode,
-        "prefix": settings.campaign_prefix,
-        **dict(zip(["domains", "groups", "sources", "offers"], values)),
+        **data, "errors": errors,
+        "missing": [key for key, rows in data.items() if not rows],
+        "demo": settings.demo_mode, "prefix": settings.campaign_prefix,
+        "base_domain": settings.keitaro_url.rstrip("/"),
     }
 
 
@@ -132,6 +145,7 @@ async def owned(cid):
 
 
 def fingerprint(stream):
+    stream = {k: v for k, v in stream.items() if k not in ("created_at", "updated_at")}
     return hashlib.sha256(
         json.dumps(stream, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -145,6 +159,36 @@ def dto(row):
         "offers": row.offers,
         "name": row.baseline.get("name", ""),
     }
+
+
+def verify_created_streams(streams, country, offer_id):
+    if len(streams) != 2:
+        raise UpstreamError(502, "Keitaro не сохранил два потока. Кампания не включена.")
+    geo = next((x for x in streams if x.get("type") == "regular"), {})
+    fallback = next((x for x in streams if x.get("type") == "default"), {})
+    filters = geo.get("filters", [])
+    valid_country = False
+    for item in filters:
+        payload = item.get("payload")
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except ValueError:
+                payload = [payload]
+        if item.get("name") == "country" and item.get("mode") == "accept" and payload == [country]:
+            valid_country = True
+    offers = fallback.get("offers", [])
+    valid = (
+        geo.get("schema") == "redirect" and geo.get("action_type") == "http"
+        and geo.get("action_payload") == "https://www.google.com/"
+        and geo.get("state") == "active" and len(filters) == 1 and valid_country
+        and fallback.get("schema") == "landings" and fallback.get("state") == "active"
+        and not fallback.get("landings") and not fallback.get("filters")
+        and len(offers) == 1 and int(offers[0]["offer_id"]) == offer_id
+        and int(offers[0]["share"]) == 100 and offers[0].get("state", "active") == "active"
+    )
+    if not valid:
+        raise UpstreamError(502, "Настройки потоков после записи отличаются. Кампания не включена; проверьте её в Keitaro.")
 
 
 @app.post("/api/campaigns")
@@ -172,7 +216,11 @@ async def create_campaign(body: CreateCampaign):
                 ("domains", body.domain_id),
                 ("traffic_sources", body.traffic_source_id),
             ]:
-                await api.request("GET", f"{kind}/{ident}")
+                if ident is None:
+                    continue
+                resource = await api.request("GET", f"{kind}/{ident}")
+                if resource.get("state") == "deleted":
+                    raise HTTPException(422, f"Объект {kind}/{ident} находится в архиве")
             groups = await api.request("GET", "groups?type=campaigns")
             if not any(int(x["id"]) == body.group_id for x in groups):
                 raise HTTPException(422, "Группа кампаний не найдена")
@@ -199,7 +247,7 @@ async def create_campaign(body: CreateCampaign):
                         "alias": "t" + uuid.uuid4().hex[:15],
                         "type": "position",
                         "state": "disabled",
-                        "domain_id": body.domain_id,
+                        **({"domain_id": body.domain_id} if body.domain_id is not None else {}),
                         "group_id": str(body.group_id),
                         "traffic_source_id": body.traffic_source_id,
                     },
@@ -247,6 +295,8 @@ async def create_campaign(body: CreateCampaign):
                         ],
                     },
                 )
+                saved_streams = await api.request("GET", f"campaigns/{campaign['id']}/streams")
+                verify_created_streams(saved_streams, body.country, body.offer_id)
                 campaign = await api.request(
                     "PUT", f"campaigns/{campaign['id']}", {"state": "active"}
                 )

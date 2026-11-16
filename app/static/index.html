@@ -85,7 +85,7 @@
     }
     button:disabled {
       opacity: 0.5;
-      cursor: wait;
+      cursor: not-allowed;
     }
     .toolbar {
       display: flex;
@@ -204,7 +204,7 @@
           ><select id="offer" required></select
           ><label for="domain">Домен</label
           ><select id="domain" required></select
-          ><label for="group">Группа</label
+          ><label><input id="base-domain" type="checkbox" style="width:auto" /> <span id="base-domain-label">Базовый домен трекера</span></label><small class="muted">Выбирайте, если использование базового домена согласовано для задания.</small><label for="group">Группа</label
           ><select id="group" required></select
           ><label for="source">Источник</label
           ><select id="source" required></select>

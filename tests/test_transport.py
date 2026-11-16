@@ -21,3 +21,19 @@ async def test_error_does_not_echo_secret(monkeypatch):
     with pytest.raises(UpstreamError) as err:
         await Keitaro().request("GET", "campaigns")
     assert "secret-never-show" not in err.value.message
+
+
+def test_tracker_url_accepts_admin_link_and_rejects_credentials():
+    from app.config import Settings
+    from pydantic import ValidationError
+    assert Settings(_env_file=None, keitaro_url='https://tracker.example/admin/').keitaro_url == 'https://tracker.example'
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, keitaro_url='https://user:password@tracker.example')
+
+
+def test_prefix_cannot_allow_all_campaigns():
+    from app.config import Settings
+    from pydantic import ValidationError
+    for prefix in ['', 'test_', 'production']:
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None, campaign_prefix=prefix)

@@ -33,9 +33,30 @@ async function busy(fn) {
     message(e.message, true);
   } finally {
     buttons.forEach((b) => (b.disabled = false));
-    $("create-submit").disabled = !catalog || Boolean(catalog.missing?.length);
+    updateReadiness();
   }
 }
+function blockers() {
+  return (catalog?.missing || []).filter(k => k !== "domains" || !$("base-domain").checked);
+}
+function updateReadiness() {
+  $("create-submit").disabled = !catalog || blockers().length > 0;
+  $("domain").disabled = $("base-domain").checked || !catalog?.domains.length;
+  $("domain").required = !$("base-domain").checked;
+}
+function readinessMessage() {
+  const labels = {domains:"домен", groups:"группа кампаний", sources:"источник трафика", offers:"оффер"};
+  const missing = blockers();
+  const failures = Object.entries(catalog.errors || {}).map(([k, v]) => `${labels[k]}: HTTP ${v.status}`);
+  if (missing.length) {
+    message("Нет доступных данных: " + missing.map(k => labels[k]).join(", ") +
+      (failures.length ? ". Ошибки: " + failures.join("; ") : "") +
+      ". Проверьте доступы в Keitaro, затем нажмите «Обновить списки». Редактор существующих кампаний доступен отдельно.", true);
+  } else message($("base-domain").checked
+    ? "Выбран базовый домен трекера. Используйте этот вариант, если он согласован для задания."
+    : "Готово. Создайте кампанию или откройте существующую.");
+}
+$("base-domain").onchange = () => { updateReadiness(); if (catalog) readinessMessage(); };
 function option(select, value, text) {
   const o = document.createElement("option");
   o.value = value;
@@ -70,12 +91,9 @@ async function init() {
       ? "ДЕМО · данные в памяти"
       : "Keitaro API";
     $("mode").className = catalog.demo ? "badge" : "";
-    await campaigns();
-    const labels = {domains:"домен", groups:"группа кампаний", sources:"источник трафика", offers:"оффер"};
-    catalog.missing = catalog.missing || Object.keys(labels).filter(k => !catalog[k].some(x=>x.state!=="deleted"));
-    if (catalog.missing.length) {
-      message("Keitaro не вернул доступные записи: " + catalog.missing.map(k=>labels[k]).join(", ") + ". Попросите администратора подготовить их или выдать доступ этому пользователю. После этого нажмите «Обновить списки». Создание кампании пока недоступно.", true);
-    } else message("Готово. Создайте кампанию или откройте существующую.");
+    $("base-domain-label").textContent = "Базовый домен: " + catalog.base_domain;
+    readinessMessage();
+    try { await campaigns(); } catch (e) { message("Не удалось загрузить кампании: " + e.message, true); }
   });
 }
 $("create").onsubmit = (e) => {
@@ -85,7 +103,8 @@ $("create").onsubmit = (e) => {
       name: $("name").value,
       country: $("country").value,
       offer_id: +$("offer").value,
-      domain_id: +$("domain").value,
+      domain_id: $("base-domain").checked ? null : +$("domain").value,
+      use_base_domain: $("base-domain").checked,
       group_id: +$("group").value,
       traffic_source_id: +$("source").value,
       request_id: requestId,

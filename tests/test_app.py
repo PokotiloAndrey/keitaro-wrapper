@@ -141,3 +141,62 @@ def test_catalogs_report_missing_dependencies(client, monkeypatch):
     result = client.get("/api/catalogs").json()
     assert result["missing"] == ["domains", "sources"]
     assert result["groups"]
+
+
+def test_base_domain_requires_explicit_selection(client):
+    _, data = create(client)
+    data.update(request_id=str(uuid4()), domain_id=None, use_base_domain=True)
+    response = client.post('/api/campaigns', json=data)
+    assert response.status_code == 200, response.text
+    assert 'domain_id' not in response.json()
+    data.update(request_id=str(uuid4()), use_base_domain=False)
+    assert client.post('/api/campaigns', json=data).status_code == 422
+
+
+def test_catalog_failure_does_not_hide_other_catalogs(client, monkeypatch):
+    from app.keitaro import api, UpstreamError
+    original = api.request
+    async def request(method, path, payload=None):
+        if path == 'traffic_sources':
+            raise UpstreamError(403, 'Forbidden')
+        return await original(method, path, payload)
+    monkeypatch.setattr(api, 'request', request)
+    response = client.get('/api/catalogs')
+    assert response.status_code == 200
+    assert response.json()['offers']
+    assert response.json()['errors']['sources']['status'] == 403
+
+
+def test_deleted_offer_rejected_before_creation(client, monkeypatch):
+    from app.keitaro import api
+    monkeypatch.setitem(api.data, 'offers', [{'id': 1, 'state': 'deleted'}])
+    before = len(api.data['campaigns'])
+    data = dict(name='deleted', country='DE', offer_id=1, domain_id=1,
+                group_id=1, traffic_source_id=1, request_id=str(uuid4()))
+    assert client.post('/api/campaigns', json=data).status_code == 422
+    assert len(api.data['campaigns']) == before
+
+
+def test_ignored_redirect_never_enables_campaign(client, monkeypatch):
+    from app.keitaro import api
+    original = api.request
+    async def request(method, path, payload=None):
+        if method == 'POST' and path == 'streams' and payload.get('schema') == 'redirect':
+            payload = {**payload, 'action_payload': ''}
+        return await original(method, path, payload)
+    monkeypatch.setattr(api, 'request', request)
+    data = dict(name='invalid_redirect', country='DE', offer_id=1, domain_id=1,
+                group_id=1, traffic_source_id=1, request_id=str(uuid4()))
+    response = client.post('/api/campaigns', json=data)
+    assert response.status_code == 502
+    assert api.data['campaigns'][-1]['state'] == 'disabled'
+
+
+def test_volatile_timestamp_does_not_block_draft(client):
+    from app.keitaro import api
+    campaign, _ = create(client)
+    cid = campaign['id']
+    sid = client.get(f'/api/campaigns/{cid}/streams').json()[1]['id']
+    client.post(f'/api/campaigns/{cid}/streams/{sid}/fetch', json={})
+    next(s for s in api.data['streams'] if s['id'] == sid)['updated_at'] = 'later'
+    assert client.post(f'/api/drafts/{sid}/push', json={'revision': 1}).status_code == 200
